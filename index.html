@@ -20,7 +20,7 @@
   </style>
 </head>
 <body>
-  <div id="aviso">Cargando...</div>
+  <div id="aviso">v3 - Cargando...</div>
 
   <a-scene id="escena"
     mindar-image="imageTargetSrc: ./target.mind;"
@@ -40,8 +40,8 @@
         id="modelo"
         src="#miModelo"
         position="0 0 0"
-        rotation="90 0 0"
-        scale="15 15 15">
+        rotation="0 0 0"
+        scale="1 1 1">
       </a-gltf-model>
     </a-entity>
   </a-scene>
@@ -52,11 +52,37 @@
     const objetivo = document.getElementById("objetivo");
     const modelo = document.getElementById("modelo");
 
-    modelo.addEventListener("model-loaded", () => aviso.textContent = "Modelo cargado. Apunta al target");
-    modelo.addEventListener("model-error", () => aviso.textContent = "Error al cargar modelo.glb");
-    escena.addEventListener("arError", () => aviso.textContent = "Error: cámara o target.mind no cargó");
-    objetivo.addEventListener("targetFound", () => aviso.textContent = "Target detectado");
-    objetivo.addEventListener("targetLost", () => aviso.textContent = "Target perdido");
+    // Tamaño final del modelo en el target (1 = ancho del target)
+    const TAMANO_DESEADO = 0.8;
+
+    modelo.addEventListener("model-loaded", () => {
+      const malla = modelo.getObject3D("mesh");
+      malla.updateMatrixWorld(true);
+
+      const caja = new THREE.Box3().setFromObject(malla);
+      const size = new THREE.Vector3();
+      const centro = new THREE.Vector3();
+      caja.getSize(size);
+      caja.getCenter(centro);
+
+      const mayor = Math.max(size.x, size.y, size.z);
+      const escala = TAMANO_DESEADO / mayor;
+
+      // Centrar en x/z y apoyar la base sobre el target
+      malla.position.x = -centro.x;
+      malla.position.y = -caja.min.y;
+      malla.position.z = -centro.z;
+
+      modelo.setAttribute("scale", escala + " " + escala + " " + escala);
+      modelo.setAttribute("rotation", "90 0 0");
+
+      aviso.textContent = "v3 - Modelo listo (escala " + escala.toFixed(1) + "). Apunta al target";
+    });
+
+    modelo.addEventListener("model-error", () => aviso.textContent = "v3 - Error al cargar modelo.glb");
+    escena.addEventListener("arError", () => aviso.textContent = "v3 - Error: cámara o target.mind no cargó");
+    objetivo.addEventListener("targetFound", () => aviso.textContent = "v3 - Target detectado");
+    objetivo.addEventListener("targetLost", () => aviso.textContent = "v3 - Target perdido");
   </script>
 </body>
 </html>
