@@ -2,14 +2,14 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
   <title>AR con modelo GLB</title>
 
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
   <style>
-    body { margin: 0; overflow: hidden; }
+    html, body { margin: 0; overflow: hidden; touch-action: none; }
     #aviso {
       position: fixed; top: 12px; left: 12px; right: 12px;
       z-index: 10; padding: 10px; border-radius: 8px;
@@ -20,7 +20,7 @@
   </style>
 </head>
 <body>
-  <div id="aviso">v3 - Cargando...</div>
+  <div id="aviso">v4 - Cargando...</div>
 
   <a-scene id="escena"
     mindar-image="imageTargetSrc: ./target.mind;"
@@ -36,13 +36,16 @@
     <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
     <a-entity id="objetivo" mindar-image-target="targetIndex: 0">
-      <a-gltf-model
-        id="modelo"
-        src="#miModelo"
-        position="0 0 0"
-        rotation="0 0 0"
-        scale="1 1 1">
-      </a-gltf-model>
+      <!-- El contenedor es el que se mueve, gira y escala con los dedos -->
+      <a-entity id="contenedor">
+        <a-gltf-model
+          id="modelo"
+          src="#miModelo"
+          position="0 0 0"
+          rotation="0 0 0"
+          scale="1 1 1">
+        </a-gltf-model>
+      </a-entity>
     </a-entity>
   </a-scene>
 
@@ -51,8 +54,9 @@
     const escena = document.getElementById("escena");
     const objetivo = document.getElementById("objetivo");
     const modelo = document.getElementById("modelo");
+    const contenedor = document.getElementById("contenedor");
 
-    // Tamaño final del modelo en el target (1 = ancho del target)
+    // Tamaño inicial del modelo en el target (1 = ancho del target)
     const TAMANO_DESEADO = 0.8;
 
     modelo.addEventListener("model-loaded", () => {
@@ -76,13 +80,80 @@
       modelo.setAttribute("scale", escala + " " + escala + " " + escala);
       modelo.setAttribute("rotation", "90 0 0");
 
-      aviso.textContent = "v3 - Modelo listo (escala " + escala.toFixed(1) + "). Apunta al target";
+      aviso.textContent = "v4 - Listo. 1 dedo gira, 2 dedos mueven y escalan";
     });
 
-    modelo.addEventListener("model-error", () => aviso.textContent = "v3 - Error al cargar modelo.glb");
-    escena.addEventListener("arError", () => aviso.textContent = "v3 - Error: cámara o target.mind no cargó");
-    objetivo.addEventListener("targetFound", () => aviso.textContent = "v3 - Target detectado");
-    objetivo.addEventListener("targetLost", () => aviso.textContent = "v3 - Target perdido");
+    modelo.addEventListener("model-error", () => aviso.textContent = "v4 - Error al cargar modelo.glb");
+    escena.addEventListener("arError", () => aviso.textContent = "v4 - Error: cámara o target.mind no cargó");
+    objetivo.addEventListener("targetFound", () => aviso.textContent = "v4 - Target detectado");
+    objetivo.addEventListener("targetLost", () => aviso.textContent = "v4 - Target perdido");
+
+    // ---------- GESTOS TÁCTILES ----------
+    const SENS_GIRO = 0.01;      // sensibilidad del giro
+    const SENS_MOVER = 0.003;    // sensibilidad al mover con 2 dedos
+    const ESCALA_MIN = 0.3;
+    const ESCALA_MAX = 4;
+
+    let ultimoX = 0, ultimoY = 0;
+    let distAnterior = 0;
+    let centroAnterior = { x: 0, y: 0 };
+
+    function distancia(t) {
+      return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    }
+    function puntoMedio(t) {
+      return {
+        x: (t[0].clientX + t[1].clientX) / 2,
+        y: (t[0].clientY + t[1].clientY) / 2
+      };
+    }
+
+    window.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 1) {
+        ultimoX = e.touches[0].clientX;
+        ultimoY = e.touches[0].clientY;
+      } else if (e.touches.length === 2) {
+        distAnterior = distancia(e.touches);
+        centroAnterior = puntoMedio(e.touches);
+      }
+    }, { passive: false });
+
+    window.addEventListener("touchmove", (e) => {
+      e.preventDefault();
+      const obj = contenedor.object3D;
+
+      if (e.touches.length === 1) {
+        // GIRAR con 1 dedo (alrededor del eje vertical del auto)
+        const dx = e.touches[0].clientX - ultimoX;
+        obj.rotation.z += dx * SENS_GIRO;
+        ultimoX = e.touches[0].clientX;
+        ultimoY = e.touches[0].clientY;
+
+      } else if (e.touches.length === 2) {
+        // ESCALAR con pellizco
+        const d = distancia(e.touches);
+        if (distAnterior > 0) {
+          let nueva = obj.scale.x * (d / distAnterior);
+          nueva = Math.min(ESCALA_MAX, Math.max(ESCALA_MIN, nueva));
+          obj.scale.set(nueva, nueva, nueva);
+        }
+        distAnterior = d;
+
+        // MOVER con 2 dedos arrastrando juntos
+        const c = puntoMedio(e.touches);
+        obj.position.x += (c.x - centroAnterior.x) * SENS_MOVER;
+        obj.position.y -= (c.y - centroAnterior.y) * SENS_MOVER;
+        centroAnterior = c;
+      }
+    }, { passive: false });
+
+    window.addEventListener("touchend", (e) => {
+      if (e.touches.length === 1) {
+        ultimoX = e.touches[0].clientX;
+        ultimoY = e.touches[0].clientY;
+      }
+      distAnterior = 0;
+    });
   </script>
 </body>
 </html>
