@@ -20,7 +20,7 @@
   </style>
 </head>
 <body>
-  <div id="aviso" class="barra">v5 - Cargando...</div>
+  <div id="aviso" class="barra">v6 - Cargando...</div>
   <div id="debug" class="barra">modelo: esperando</div>
 
   <a-scene id="escena"
@@ -51,59 +51,74 @@
     const modelo = document.getElementById("modelo");
     const contenedor = document.getElementById("contenedor");
 
-    const TAMANO_DESEADO = 0.8;   // 1 = ancho del target
+    const TAMANO_DESEADO = 0.8;     // 1 = ancho del target
+    const ESCALA_RESPALDO = 18;     // se usa solo si la medición falla
     let ajustado = false;
 
     window.addEventListener("error", (e) => {
       debug.textContent = "ERROR JS: " + e.message;
     });
 
+    // Mide el modelo usando solo sus transformaciones locales
+    // (no depende del target ni de matrices del mundo)
+    function medirCaja(raiz) {
+      raiz.traverse((n) => n.updateMatrix());
+      const caja = new THREE.Box3();
+      raiz.traverse((o) => {
+        if (o.isMesh && o.geometry) {
+          if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+          const bb = o.geometry.boundingBox;
+          if (!bb || bb.isEmpty()) return;
+          const M = new THREE.Matrix4().copy(o.matrix);
+          let p = o.parent;
+          while (p && p !== raiz) { M.premultiply(p.matrix); p = p.parent; }
+          caja.union(bb.clone().applyMatrix4(M));
+        }
+      });
+      return caja;
+    }
+
     function ajustarModelo() {
       if (ajustado) return;
       const malla = modelo.getObject3D("mesh");
       if (!malla) { debug.textContent = "modelo: aún no carga"; return; }
 
-      malla.updateMatrixWorld(true);
+      let escala = ESCALA_RESPALDO;
+      let nota = "respaldo";
 
-      // Caja del modelo medida en su propio espacio local
-      const inv = new THREE.Matrix4().copy(malla.matrixWorld).invert();
-      const caja = new THREE.Box3();
-      malla.traverse((o) => {
-        if (o.isMesh && o.geometry) {
-          o.geometry.computeBoundingBox();
-          const m = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld);
-          caja.union(o.geometry.boundingBox.clone().applyMatrix4(m));
+      try {
+        const caja = medirCaja(malla);
+        const size = new THREE.Vector3();
+        const centro = new THREE.Vector3();
+        caja.getSize(size);
+        caja.getCenter(centro);
+        const mayor = Math.max(size.x, size.y, size.z);
+
+        if (!caja.isEmpty() && isFinite(mayor) && mayor > 0) {
+          escala = TAMANO_DESEADO / mayor;
+          // Centrar en x/z y apoyar la base sobre el target
+          malla.position.set(-centro.x, -caja.min.y, -centro.z);
+          nota = "medido";
         }
-      });
-
-      const size = new THREE.Vector3();
-      const centro = new THREE.Vector3();
-      caja.getSize(size);
-      caja.getCenter(centro);
-
-      const mayor = Math.max(size.x, size.y, size.z);
-      if (!isFinite(mayor) || mayor === 0) { debug.textContent = "modelo: tamaño inválido"; return; }
-      const escala = TAMANO_DESEADO / mayor;
-
-      // Centrar en x/z y apoyar la base sobre el target
-      malla.position.set(-centro.x, -caja.min.y, -centro.z);
+      } catch (err) {
+        debug.textContent = "ERROR medición: " + err.message;
+      }
 
       modelo.object3D.scale.set(escala, escala, escala);
       modelo.object3D.rotation.set(Math.PI / 2, 0, 0);   // acostado sobre el target
 
       ajustado = true;
-      debug.textContent = "modelo: ajustado, escala " + escala.toFixed(1);
+      debug.textContent = "modelo: " + nota + ", escala " + escala.toFixed(1);
     }
 
-    // Se ajusta en cualquier caso: ya cargado, al cargar, o al detectar el target
     modelo.addEventListener("model-loaded", ajustarModelo);
     modelo.addEventListener("model-error", () => debug.textContent = "ERROR: no cargó modelo.glb");
     if (modelo.getObject3D("mesh")) ajustarModelo();
 
-    escena.addEventListener("arReady", () => { aviso.textContent = "v5 - Cámara lista. Apunta al target"; ajustarModelo(); });
-    escena.addEventListener("arError", () => aviso.textContent = "v5 - Error: cámara o target.mind no cargó");
-    objetivo.addEventListener("targetFound", () => { aviso.textContent = "v5 - Target detectado"; ajustarModelo(); });
-    objetivo.addEventListener("targetLost", () => aviso.textContent = "v5 - Target perdido");
+    escena.addEventListener("arReady", () => { aviso.textContent = "v6 - Cámara lista. Apunta al target"; ajustarModelo(); });
+    escena.addEventListener("arError", () => aviso.textContent = "v6 - Error: cámara o target.mind no cargó");
+    objetivo.addEventListener("targetFound", () => { aviso.textContent = "v6 - Target detectado"; ajustarModelo(); });
+    objetivo.addEventListener("targetLost", () => aviso.textContent = "v6 - Target perdido");
 
     // ---------- GESTOS TÁCTILES ----------
     const SENS_GIRO = 0.01;
