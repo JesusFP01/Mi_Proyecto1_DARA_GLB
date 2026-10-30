@@ -2,25 +2,26 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AR con modelo GLB</title>
 
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
   <style>
-    html, body { margin: 0; overflow: hidden; touch-action: none; }
-    #aviso {
-      position: fixed; top: 12px; left: 12px; right: 12px;
-      z-index: 10; padding: 10px; border-radius: 8px;
-      background: #153451; color: white;
-      font: 16px Arial; text-align: center;
-      pointer-events: none;
+    html, body { margin: 0; overflow: hidden; }
+    .barra {
+      position: fixed; left: 12px; right: 12px; z-index: 10;
+      padding: 8px; border-radius: 8px; color: white;
+      font: 15px Arial; text-align: center; pointer-events: none;
     }
+    #aviso { top: 12px; background: #153451; }
+    #debug { top: 60px; background: rgba(0,0,0,0.6); font-size: 13px; }
   </style>
 </head>
 <body>
-  <div id="aviso">v4 - Cargando...</div>
+  <div id="aviso" class="barra">v5 - Cargando...</div>
+  <div id="debug" class="barra">modelo: esperando</div>
 
   <a-scene id="escena"
     mindar-image="imageTargetSrc: ./target.mind;"
@@ -36,101 +37,105 @@
     <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
     <a-entity id="objetivo" mindar-image-target="targetIndex: 0">
-      <!-- El contenedor es el que se mueve, gira y escala con los dedos -->
       <a-entity id="contenedor">
-        <a-gltf-model
-          id="modelo"
-          src="#miModelo"
-          position="0 0 0"
-          rotation="0 0 0"
-          scale="1 1 1">
-        </a-gltf-model>
+        <a-gltf-model id="modelo" src="#miModelo"></a-gltf-model>
       </a-entity>
     </a-entity>
   </a-scene>
 
   <script>
     const aviso = document.getElementById("aviso");
+    const debug = document.getElementById("debug");
     const escena = document.getElementById("escena");
     const objetivo = document.getElementById("objetivo");
     const modelo = document.getElementById("modelo");
     const contenedor = document.getElementById("contenedor");
 
-    // Tamaño inicial del modelo en el target (1 = ancho del target)
-    const TAMANO_DESEADO = 0.8;
+    const TAMANO_DESEADO = 0.8;   // 1 = ancho del target
+    let ajustado = false;
 
-    modelo.addEventListener("model-loaded", () => {
+    window.addEventListener("error", (e) => {
+      debug.textContent = "ERROR JS: " + e.message;
+    });
+
+    function ajustarModelo() {
+      if (ajustado) return;
       const malla = modelo.getObject3D("mesh");
+      if (!malla) { debug.textContent = "modelo: aún no carga"; return; }
+
       malla.updateMatrixWorld(true);
 
-      const caja = new THREE.Box3().setFromObject(malla);
+      // Caja del modelo medida en su propio espacio local
+      const inv = new THREE.Matrix4().copy(malla.matrixWorld).invert();
+      const caja = new THREE.Box3();
+      malla.traverse((o) => {
+        if (o.isMesh && o.geometry) {
+          o.geometry.computeBoundingBox();
+          const m = new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld);
+          caja.union(o.geometry.boundingBox.clone().applyMatrix4(m));
+        }
+      });
+
       const size = new THREE.Vector3();
       const centro = new THREE.Vector3();
       caja.getSize(size);
       caja.getCenter(centro);
 
       const mayor = Math.max(size.x, size.y, size.z);
+      if (!isFinite(mayor) || mayor === 0) { debug.textContent = "modelo: tamaño inválido"; return; }
       const escala = TAMANO_DESEADO / mayor;
 
       // Centrar en x/z y apoyar la base sobre el target
-      malla.position.x = -centro.x;
-      malla.position.y = -caja.min.y;
-      malla.position.z = -centro.z;
+      malla.position.set(-centro.x, -caja.min.y, -centro.z);
 
-      modelo.setAttribute("scale", escala + " " + escala + " " + escala);
-      modelo.setAttribute("rotation", "90 0 0");
+      modelo.object3D.scale.set(escala, escala, escala);
+      modelo.object3D.rotation.set(Math.PI / 2, 0, 0);   // acostado sobre el target
 
-      aviso.textContent = "v4 - Listo. 1 dedo gira, 2 dedos mueven y escalan";
-    });
+      ajustado = true;
+      debug.textContent = "modelo: ajustado, escala " + escala.toFixed(1);
+    }
 
-    modelo.addEventListener("model-error", () => aviso.textContent = "v4 - Error al cargar modelo.glb");
-    escena.addEventListener("arError", () => aviso.textContent = "v4 - Error: cámara o target.mind no cargó");
-    objetivo.addEventListener("targetFound", () => aviso.textContent = "v4 - Target detectado");
-    objetivo.addEventListener("targetLost", () => aviso.textContent = "v4 - Target perdido");
+    // Se ajusta en cualquier caso: ya cargado, al cargar, o al detectar el target
+    modelo.addEventListener("model-loaded", ajustarModelo);
+    modelo.addEventListener("model-error", () => debug.textContent = "ERROR: no cargó modelo.glb");
+    if (modelo.getObject3D("mesh")) ajustarModelo();
+
+    escena.addEventListener("arReady", () => { aviso.textContent = "v5 - Cámara lista. Apunta al target"; ajustarModelo(); });
+    escena.addEventListener("arError", () => aviso.textContent = "v5 - Error: cámara o target.mind no cargó");
+    objetivo.addEventListener("targetFound", () => { aviso.textContent = "v5 - Target detectado"; ajustarModelo(); });
+    objetivo.addEventListener("targetLost", () => aviso.textContent = "v5 - Target perdido");
 
     // ---------- GESTOS TÁCTILES ----------
-    const SENS_GIRO = 0.01;      // sensibilidad del giro
-    const SENS_MOVER = 0.003;    // sensibilidad al mover con 2 dedos
+    const SENS_GIRO = 0.01;
+    const SENS_MOVER = 0.003;
     const ESCALA_MIN = 0.3;
     const ESCALA_MAX = 4;
 
-    let ultimoX = 0, ultimoY = 0;
+    let ultimoX = 0;
     let distAnterior = 0;
     let centroAnterior = { x: 0, y: 0 };
 
-    function distancia(t) {
-      return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
-    }
-    function puntoMedio(t) {
-      return {
-        x: (t[0].clientX + t[1].clientX) / 2,
-        y: (t[0].clientY + t[1].clientY) / 2
-      };
-    }
+    const distancia = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const puntoMedio = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
 
     window.addEventListener("touchstart", (e) => {
       if (e.touches.length === 1) {
         ultimoX = e.touches[0].clientX;
-        ultimoY = e.touches[0].clientY;
       } else if (e.touches.length === 2) {
         distAnterior = distancia(e.touches);
         centroAnterior = puntoMedio(e.touches);
       }
-    }, { passive: false });
+    }, { passive: true });
 
     window.addEventListener("touchmove", (e) => {
-      e.preventDefault();
       const obj = contenedor.object3D;
 
       if (e.touches.length === 1) {
-        // GIRAR con 1 dedo (alrededor del eje vertical del auto)
         const dx = e.touches[0].clientX - ultimoX;
         obj.rotation.z += dx * SENS_GIRO;
         ultimoX = e.touches[0].clientX;
-        ultimoY = e.touches[0].clientY;
 
       } else if (e.touches.length === 2) {
-        // ESCALAR con pellizco
         const d = distancia(e.touches);
         if (distAnterior > 0) {
           let nueva = obj.scale.x * (d / distAnterior);
@@ -139,19 +144,15 @@
         }
         distAnterior = d;
 
-        // MOVER con 2 dedos arrastrando juntos
         const c = puntoMedio(e.touches);
         obj.position.x += (c.x - centroAnterior.x) * SENS_MOVER;
         obj.position.y -= (c.y - centroAnterior.y) * SENS_MOVER;
         centroAnterior = c;
       }
-    }, { passive: false });
+    }, { passive: true });
 
     window.addEventListener("touchend", (e) => {
-      if (e.touches.length === 1) {
-        ultimoX = e.touches[0].clientX;
-        ultimoY = e.touches[0].clientY;
-      }
+      if (e.touches.length === 1) ultimoX = e.touches[0].clientX;
       distAnterior = 0;
     });
   </script>
